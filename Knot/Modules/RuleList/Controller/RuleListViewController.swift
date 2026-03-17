@@ -7,8 +7,6 @@
 //
 
 import UIKit
-import ZKProgressHUD
-import SnapKit
 import TunnelServices
 
 let CurrentRuleListChange: NSNotification.Name = NSNotification.Name(rawValue: "CurrentRuleListChange")

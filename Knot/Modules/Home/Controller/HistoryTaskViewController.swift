@@ -7,8 +7,6 @@
 //
 
 import UIKit
-import PullToRefreshKit
-import ZKProgressHUD
 import TunnelServices
 import NetworkExtension
 

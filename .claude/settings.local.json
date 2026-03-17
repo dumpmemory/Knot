@@ -65,7 +65,10 @@
       "Bash(rm -rf ~/Library/Developer/Xcode/DerivedData/Knot-* 2)",
       "Bash(/dev/null xcodebuild:*)",
       "Bash(ruby -e \":*)",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(grep -rn \"import NIOHTTP2\\\\|NIOHTTP2\" --include=*.swift TunnelServices/ Knot/)",
+      "Bash(ruby -e ':*)"
     ]
   }
 }

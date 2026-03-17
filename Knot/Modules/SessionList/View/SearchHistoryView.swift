@@ -7,8 +7,6 @@
 //
 
 import UIKit
-import JXSegmentedView
-import SnapKit
 
 let SearchHistoryDidUpdateNoti = NSNotification.Name.init(rawValue: "SearchHistoryDidUpdateNoti")
 let SearchHistoryUserDefaults = "SearchHistoryUserDefaults"

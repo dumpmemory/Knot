@@ -7,7 +7,6 @@
 //
 
 import UIKit
-import SnapKit
 import TunnelServices
 
 class RuleTextViewController: BaseViewController,PopupContentViewController,UITextViewDelegate {

@@ -7,8 +7,6 @@
 //
 
 import UIKit
-import ZKProgressHUD
-import SnapKit
 import TunnelServices
 
 class SessionDetailViewController: BaseViewController {

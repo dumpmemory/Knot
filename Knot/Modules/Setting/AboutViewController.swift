@@ -7,7 +7,6 @@
 //
 
 import UIKit
-import SnapKit
 import AxLogger
 
 class AboutViewController: BaseViewController {

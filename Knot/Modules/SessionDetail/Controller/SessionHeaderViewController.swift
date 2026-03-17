@@ -7,7 +7,6 @@
 //
 
 import UIKit
-import ZKProgressHUD
 import TunnelServices
 
 class SessionHeaderViewController: BaseViewController {

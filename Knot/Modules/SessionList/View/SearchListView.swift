@@ -7,8 +7,6 @@
 //
 
 import UIKit
-import JXSegmentedView
-import SnapKit
 import TunnelServices
 
 protocol SearchListViewDelegate: class {

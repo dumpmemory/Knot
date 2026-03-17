@@ -7,7 +7,6 @@
 //
 
 import UIKit
-import ZKProgressHUD
 
 @objcMembers final class VisualActivityViewController: UIActivityViewController {
     

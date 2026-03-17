@@ -7,7 +7,6 @@
 //
 
 import UIKit
-import SnapKit
 import TunnelServices
 
 class TastView: UIView, UITableViewDelegate, UITableViewDataSource {
