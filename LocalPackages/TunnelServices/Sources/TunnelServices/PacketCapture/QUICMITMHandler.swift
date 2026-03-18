@@ -18,7 +18,6 @@
 
 import Foundation
 import NIO
-// import AxLogger  // provided by AxLoggerShim in this package
 
 #if canImport(SwiftQuiche)
 import SwiftQuiche

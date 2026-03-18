@@ -11,7 +11,6 @@ import NIOTLS
 import NIO
 import NIOSSL
 import NIOHTTP1
-// import AxLogger  // provided by AxLoggerShim in this package
 
 class SSLHandler: ChannelInboundHandler,RemovableChannelHandler {
     typealias InboundIn = ByteBuffer

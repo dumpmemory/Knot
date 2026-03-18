@@ -11,7 +11,6 @@
 
 import Foundation
 import NIO
-// import AxLogger  // provided by AxLoggerShim in this package
 
 // MARK: - IP Filter Rule
 

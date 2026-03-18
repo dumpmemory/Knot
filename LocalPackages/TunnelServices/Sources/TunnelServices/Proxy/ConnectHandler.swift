@@ -13,7 +13,6 @@ import NIO
 import NIOHTTP1
 import NIOSSL
 import NIOTLS
-// import AxLogger  // provided by AxLoggerShim in this package
 
 public final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
     public typealias InboundIn = HTTPServerRequestPart

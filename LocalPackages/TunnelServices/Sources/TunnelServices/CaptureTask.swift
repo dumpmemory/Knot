@@ -8,7 +8,6 @@
 
 import Foundation
 import NIO
-// import AxLogger  // provided by AxLoggerShim in this package
 import NIOSSL
 import X509
 import Crypto

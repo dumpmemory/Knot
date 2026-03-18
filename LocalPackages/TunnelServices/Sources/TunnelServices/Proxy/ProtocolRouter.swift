@@ -11,7 +11,6 @@ import Foundation
 import NIO
 import NIOHTTP1
 import NIOSSL
-// import AxLogger  // provided by AxLoggerShim in this package
 
 public final class ProtocolRouter: ChannelInboundHandler, RemovableChannelHandler {
     public typealias InboundIn = ByteBuffer

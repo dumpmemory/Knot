@@ -20,7 +20,6 @@
 //
 
 import Foundation
-// import AxLogger  // provided by AxLoggerShim in this package
 
 // MARK: - Captured Packet Record
 

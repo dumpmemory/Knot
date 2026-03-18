@@ -9,7 +9,6 @@
 
 import Foundation
 import NIOSSL
-// import AxLogger  // provided by AxLoggerShim in this package
 
 // MARK: - OCSP Result
 

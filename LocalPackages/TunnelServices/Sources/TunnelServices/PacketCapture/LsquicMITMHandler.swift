@@ -13,7 +13,6 @@
 //
 
 import Foundation
-// import AxLogger  // provided by AxLoggerShim in this package
 
 #if canImport(SwiftLsquic)
 import SwiftLsquic

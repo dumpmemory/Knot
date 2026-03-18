@@ -12,7 +12,6 @@ import NIO
 import NIOHTTP1
 import NIOHTTP2
 import NIOSSL
-// import AxLogger  // provided by AxLoggerShim in this package
 
 // MARK: - HTTP/2 Pipeline Builder
 

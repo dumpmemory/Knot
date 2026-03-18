@@ -15,7 +15,6 @@ import NIOHTTP1
 import NIOSSL
 import NIOTLS
 import NIOHTTPCompression
-// import AxLogger  // provided by AxLoggerShim in this package
 
 public final class MITMHandler: ChannelInboundHandler, RemovableChannelHandler {
     public typealias InboundIn = ByteBuffer

@@ -10,7 +10,6 @@
 
 import Foundation
 import NIO
-// import AxLogger  // provided by AxLoggerShim in this package
 
 public final class PipelineLogHandler: ChannelDuplexHandler {
     public typealias InboundIn = NIOAny

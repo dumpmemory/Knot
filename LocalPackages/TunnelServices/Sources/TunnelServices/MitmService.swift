@@ -9,7 +9,6 @@
 import Foundation
 import NIO
 import NIOHTTP1
-// import AxLogger  // provided by AxLoggerShim in this package
 
 
 public let StartInExtension = true

@@ -8,7 +8,6 @@
 
 import Foundation
 import NIO
-// import AxLogger  // provided by AxLoggerShim in this package
 
 public final class TunnelHandler: ChannelInboundHandler, RemovableChannelHandler {
     public typealias InboundIn = ByteBuffer

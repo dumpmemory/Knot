@@ -8,7 +8,6 @@
 
 import Foundation
 import Network
-// import AxLogger  // provided by AxLoggerShim in this package
 
 public class UDPForwarder {
 

@@ -23,7 +23,6 @@ import NIOWebSocket
 import NIOSSL
 import NIOTLS
 import NIOHTTPCompression
-// import AxLogger  // provided by AxLoggerShim in this package
 
 // MARK: - WebSocket Upgrade Detector
 
