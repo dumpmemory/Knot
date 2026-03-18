@@ -45,6 +45,12 @@ Knot/
 │   ├── SystemExtensionProvider.swift
 │   └── Info.plist
 │
+├── Resources/
+│   └── Http/                       # 证书安装 HTML 页面（中英文）
+│       ├── index.html
+│       ├── privacy_en.html
+│       └── privacy_cn.html
+│
 ├── LocalPackages/
 │   ├── KnotUI/                     # 共享 SwiftUI 视图层
 │   │   ├── Package.swift
@@ -127,11 +133,11 @@ Knot/
 │   │       ├── PacketCapture/
 │   │       ├── Config/
 │   │       ├── Rule/
+│   │       ├── Export/              # PCAPExporter 等
 │   │       └── Utils/
 │   │
 │   ├── SwiftQuiche/                # 现有
-│   ├── SwiftLsquic/                # 现有
-│   └── KnotNIOSSL/                 # 现有
+│   └── SwiftLsquic/                # 现有
 │
 ├── Frameworks/                     # xcframework (quiche, lsquic)
 └── Knot.xcodeproj
@@ -278,7 +284,7 @@ struct RootView: View {
 - Focus 筛选标签
 - 搜索历史
 - 分页加载（50条/页）+ 下拉刷新
-- 编辑模式：多选 → 批量导出（URL/cURL/HAR）
+- 编辑模式：多选 → 批量导出（URL/cURL/HAR/PCAP）
 - 每个 Cell：方法标签、域名、路径、状态码、大小、耗时
 
 #### SessionDetail（会话详情）
@@ -291,9 +297,9 @@ struct RootView: View {
 #### RuleList（规则管理）
 - 规则配置列表，当前激活标记
 - 新建 / 下载配置
-- 规则详情编辑：概览 + 匹配规则列表
-- 匹配规则类型：Domain / Domain Keyword / Domain Suffix / User-Agent / URL Regex
-- 默认策略：DIRECT / PROXY / BLOCK
+- 规则详情编辑：概览（General）+ 匹配规则列表（Rule）+ Host 映射（Host）
+- 匹配规则类型：Domain / Domain Keyword / Domain Suffix / User-Agent / URL Regex / IP-CIDR
+- 默认策略：DIRECT / REJECT / COPY / DEFAULT
 
 #### Certificate（证书管理）
 - 证书状态卡片（未安装 / 已安装 / 已信任）
@@ -362,7 +368,7 @@ Components/
 ├── CertStatusCard         # 证书状态卡片
 ├── SearchBar              # 搜索栏 + 筛选
 ├── FocusTagsView          # Focus 筛选标签
-├── ExportMenu             # 导出菜单（URL/cURL/HAR）
+├── ExportMenu             # 导出菜单（URL/cURL/HAR/PCAP）
 ├── EditToolbar            # 编辑模式工具栏
 └── PlaceholderView        # 空状态 / 未选择占位
 ```
@@ -371,13 +377,38 @@ Components/
 
 ## 4. 网络层设计
 
-### 4.1 协议抽象层
+### 4.1 TunnelServices 现有能力清单
+
+TunnelServices 已实现以下协议和功能，SPM 化后全部保留：
+
+| 类别 | 功能 | 关键文件 |
+|------|------|---------|
+| HTTP/HTTPS 抓包 | 核心 MITM 抓包 | HTTPHandler, HTTPSHandler |
+| SOCKS5 代理 | SOCKS5 协议支持 | SOCKSProxyHandler |
+| WebSocket 抓包 | WebSocket 帧捕获 | WebSocketCaptureHandler |
+| HTTP/2 抓包 | HTTP/2 多路复用捕获 | HTTP2CaptureHandler |
+| HTTP/3 抓包 | QUIC/HTTP3 捕获 | quiche/lsquic 集成 |
+| gRPC 抓包 | gRPC 协议解析 | GRPCCaptureHandler |
+| DNS 解析 | DNS 请求/响应捕获 | DNS Codec |
+| MQTT 解析 | MQTT 协议解析 | MQTT Codec |
+| 断点/重写 | 暂停并编辑请求/响应 | BreakpointHandler |
+| 请求重放 | Mock/Map Local/Map Remote | RequestReplayer |
+| 流量整形 | 带宽限速 | TrafficShapingHandler |
+| PCAP 导出 | 标准 PCAP 格式导出 | PCAPExporter |
+| 协议检测 | 自动识别流量协议 | ProtocolDetector |
+
+> 注：UI 层当前仅展示 HTTP/HTTPS 会话。断点/重写、请求重放、流量整形等高级功能的 UI 入口将在后续版本中添加，TunnelServices 层已具备完整支持。
+
+### 4.2 协议抽象层
 
 ```swift
 // KnotCore/Sources/Services/TunnelServiceProtocol.swift
-protocol TunnelServiceProtocol {
-    var status: TunnelStatus { get }
-    var statusPublisher: AnyPublisher<TunnelStatus, Never> { get }
+@Observable class TunnelServiceState {
+    var status: TunnelStatus = .disconnected
+}
+
+protocol TunnelServiceProtocol: AnyObject {
+    var state: TunnelServiceState { get }
 
     func startCapture(config: CaptureConfig) async throws
     func stopCapture() async throws
@@ -395,10 +426,12 @@ protocol CertificateServiceProtocol {
 }
 
 enum TunnelStatus: Equatable {
+    case invalid
     case disconnected
     case connecting
     case connected(since: Date)
     case disconnecting
+    case reasserting
     case error(String)
 }
 
@@ -409,13 +442,13 @@ enum CertTrustStatus {
 }
 ```
 
-### 4.2 iOS 实现
+### 4.3 iOS 实现
 
 `iOSTunnelService`：基于现有 `NETunnelProviderManager` 逻辑，封装为 `TunnelServiceProtocol` 实现。PacketTunnelProvider 保持不变，继续调用 TunnelServices 中的 ProxyServer、ProtocolDetector、各 Handler。
 
 `iOSCertificateService`：保持现有逻辑 — 本地安装引导 + HTTP Server 给其他设备下载。
 
-### 4.3 macOS 实现
+### 4.4 macOS 实现
 
 `macOSTunnelService`：
 - 使用 `OSSystemExtensionManager` 提交激活请求
@@ -433,7 +466,19 @@ enum CertTrustStatus {
 - 核心抓包逻辑调用 TunnelServices（与 iOS 共享）
 - 差异点：DNS 配置方式、路由配置（通过少量条件编译处理）
 
-### 4.4 依赖注入
+### 4.5 IPC 架构（App ↔ Extension 通信）
+
+现有 IPC 机制：
+- **App Group**（`group.Lojii.NIO1901`）：共享 SQLite 数据库、配置文件
+- **UDP Socket**（CocoaAsyncSocket / GCDAsyncUdpSocket）：实时流量计数器、状态更新
+
+macOS 适配：
+- App Group 在 macOS System Extension 中同样可用，标识符保持一致
+- UDP Socket 通信在 macOS 上行为一致（localhost 通信），CocoaAsyncSocket 支持 macOS
+- macOS System Extension 的沙盒限制不同于 iOS，需要在 entitlements 中声明 `com.apple.developer.system-extension.install` 和网络相关权限
+- 如 CocoaAsyncSocket 在 macOS 下有兼容问题，备选方案：使用 `Network.framework` (NWConnection) 替换 UDP 通信
+
+### 4.6 依赖注入
 
 ```swift
 // iOS
@@ -458,25 +503,65 @@ enum CertTrustStatus {
 }
 ```
 
-### 4.5 TunnelServices SPM 化改造
+### 4.7 TunnelServices SPM 化改造
 
-1. 移除 `import UIKit`，替换为 `import Foundation`
-2. SQLite 路径改用 App Group container，通过注入传入
-3. SwiftNIO 依赖天然跨平台，无需改动
-4. quiche/lsquic xcframework 需确认包含 macOS slice，否则从源码重编译
-5. AxLogger 中的 iOS 专有 API 改为 `os.Logger`
+#### UIKit 依赖移除计划
 
-### 4.6 风险点
+TunnelServices 中多处文件 `import UIKit`，需逐一处理：
+
+| 文件 | UIKit 用途 | 替换方案 |
+|------|-----------|---------|
+| Session.swift | NSObject 继承（via ASModel） | 改为纯 Swift struct/class，移除 ASModel 基类 |
+| CaptureTask.swift | NSObject 继承 + CocoaAsyncSocket | 移除 NSObject，保留 GCDAsyncUdpSocket（已支持 macOS） |
+| Rule.swift | NSObject 继承（via ASModel） | 同 Session.swift |
+| MitmService.swift | UIKit 类型引用 | 替换为 Foundation 等价物 |
+| 其他模型文件 | ASModel 基类 | 评估 ActiveSQLite ORM 的 macOS 兼容性；若 ASModel 强依赖 UIKit/NSObject，考虑替换为 GRDB 或直接 SQLite |
+
+> ActiveSQLite ORM 的 ASModel 继承自 NSObject。需验证 `import Foundation`（而非 UIKit）是否足以提供 NSObject。在 macOS 上 Foundation 包含 NSObject，因此大多数情况下只需替换 import 即可。
+
+#### 其他改造项
+
+1. SQLite 路径改用 App Group container，通过注入传入
+2. SwiftNIO 依赖天然跨平台，无需改动
+3. AxLogger 迁移：现有 `Lib/AxLogger` 已包含 `AxLoggerOSX` target，优先评估直接使用；若不满足需求则统一替换为 `os.Logger`
+4. quiche/lsquic xcframework 重新编译（见 4.8 前置任务）
+
+### 4.8 前置任务（必须在开发前完成）
+
+#### xcframework macOS 架构编译
+
+现有 `CQuiche.xcframework` 和 `CLsquic.xcframework` **仅包含 iOS 架构**（ios-arm64、ios-arm64-simulator），缺少 macOS slice。这是确定性问题，非风险。
+
+**所需步骤：**
+1. 从 Cloudflare quiche 源码编译 macOS arm64 和 x86_64 静态库
+2. 从 LiteSpeed lsquic 源码编译 macOS arm64 和 x86_64 静态库
+3. 使用 `xcodebuild -create-xcframework` 重建包含 iOS + macOS 的 xcframework
+4. 更新 SwiftQuiche 和 SwiftLsquic 的 Package.swift binaryTarget 路径
+
+> 如果编译困难或耗时过长，可暂时在 macOS 上禁用 HTTP3 支持（通过条件编译），后续补充。
+
+### 4.9 其他风险点
 
 | 风险 | 影响 | 应对 |
 |------|------|------|
-| quiche/lsquic 缺少 macOS 架构 | HTTP3 在 macOS 不可用 | 从源码重新编译 xcframework，加入 macOS arm64/x86_64 |
 | macOS SystemExtension 审核 | 需要特殊 entitlement | 开发阶段 SIP 关闭测试，发布需向 Apple 申请 |
 | NETunnelProviderManager macOS 差异 | 路由/DNS 配置不同 | 条件编译 `#if os(macOS)` 仅在 Extension 入口处 |
+| CocoaAsyncSocket macOS 兼容性 | UDP IPC 可能异常 | 备选 Network.framework NWConnection |
 
 ---
 
-## 5. 技术栈总结
+## 5. 数据迁移
+
+从现有 UIKit 版本升级到新版本时：
+
+- **SQLite 数据库**：Schema 不变，仅路径可能调整（确保 App Group container 路径一致）
+- **证书文件**：CA 目录下的证书文件保持不变，新版本继续读取
+- **规则配置**：INI 格式规则文件保持兼容
+- **用户偏好**：UserDefaults 迁移到 App Group 共享域
+
+---
+
+## 6. 技术栈总结
 
 | 层 | 技术 |
 |----|------|
@@ -489,5 +574,6 @@ enum CertTrustStatus {
 | HTTP3 | quiche / lsquic |
 | iOS 抓包 | NetworkExtension (PacketTunnel) |
 | macOS 抓包 | SystemExtension + PacketTunnel |
+| IPC | App Group + UDP Socket (CocoaAsyncSocket) |
 | 包管理 | Swift Package Manager |
 | 最低版本 | iOS 17 / macOS 14 |
