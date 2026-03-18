@@ -34,9 +34,50 @@ public enum ProxyConfig {
     public enum VPN {
         public static let tunnelAddress = "127.0.0.1"
         public static let ipv4Address = "192.169.89.1"
+        public static let ipv6Address = "fd00::1"
         public static let subnetMask = "255.255.255.0"
         public static let mtu: NSNumber = 1500
-        public static let dnsServers = "8.8.8.8,8.4.4.4"
+        public static let dnsServers = ["8.8.8.8", "8.8.4.4"]
+
+        /// Networks excluded from tunnel (to prevent routing loops)
+        public static let excludedIPv4Routes = [
+            ("127.0.0.0", "255.0.0.0"),       // localhost
+            ("192.168.0.0", "255.255.0.0"),    // private
+            ("10.0.0.0", "255.0.0.0"),         // private
+        ]
+    }
+
+    // MARK: - Packet Capture
+
+    public enum PacketCapture {
+        public static let enableTCPCapture = true
+        public static let enableUDPCapture = true
+        public static let enableICMPCapture = true
+        public static let enablePCAPRecording = false
+        public static let maxPCAPFileSize = 50 * 1024 * 1024  // 50MB
+    }
+
+    // MARK: - HTTP/3 (QUIC MITM)
+
+    public enum HTTP3 {
+        /// Enable HTTP/3 MITM interception.
+        /// When false, QUIC packets are dropped to force HTTP/2 fallback.
+        public static var enabled = false
+
+        /// QUIC backend engine selection.
+        public enum Backend: String {
+            case quiche = "quiche"    // Cloudflare quiche (Rust, 43MB, poll-based)
+            case lsquic = "lsquic"   // LiteSpeed lsquic (C, 31MB, callback-based)
+        }
+
+        /// Which QUIC engine to use. Can be switched at runtime before enabling.
+        public static var backend: Backend = .quiche
+
+        /// Maximum concurrent QUIC MITM sessions (memory management).
+        public static let maxSessions = 20
+
+        /// QUIC idle timeout in milliseconds.
+        public static let idleTimeoutMs: UInt64 = 30_000
     }
 
     // MARK: - SSL/TLS
