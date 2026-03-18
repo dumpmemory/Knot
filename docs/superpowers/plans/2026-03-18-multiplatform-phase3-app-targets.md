@@ -189,14 +189,14 @@ final class iOSCertificateService: CertificateServiceProtocol {
 
     func exportCertificate() -> Data {
         // Load CA cert from bundle or App Group container
-        let certPath = MitmService.getCACertPath()
+        let certPath = MitmService.getCertStorePath() /* NOTE: verify actual API — may be CertStore.getCAPath() or similar from TunnelServices/Config/ */
         return (try? Data(contentsOf: URL(fileURLWithPath: certPath))) ?? Data()
     }
 
     func checkTrustStatus() -> CertTrustStatus {
         // Check if cert is installed and trusted
         // This requires checking via SecTrust API
-        let certPath = MitmService.getCACertPath()
+        let certPath = MitmService.getCertStorePath() /* NOTE: verify actual API — may be CertStore.getCAPath() or similar from TunnelServices/Config/ */
         guard FileManager.default.fileExists(atPath: certPath) else {
             trustStatus = .notInstalled
             return trustStatus
@@ -237,12 +237,15 @@ struct KnotApp_iOS: App {
         ASConfigration.setDefaultDB(path: MitmService.getDBPath(), name: "Session")
 
         // First launch defaults
+        // NOTE: Rule.defaultRule() returns non-optional Rule
         if UserDefaults.standard.string(forKey: "isFirstLaunch") == nil {
-            if let rule = Rule.defaultRule() {
-                try? rule.saveToDB()
-            }
+            let rule = Rule.defaultRule()
+            try? rule.saveToDB()
             UserDefaults.standard.set("no", forKey: "isFirstLaunch")
         }
+
+        // NOTE: ASConfigration and Rule must be public in TunnelServices.
+        // If not, expose them via a public initialization function.
 
         // Register platform services
         ServiceContainer.shared.register(
@@ -511,12 +514,12 @@ final class macOSCertificateService: CertificateServiceProtocol {
     }
 
     func exportCertificate() -> Data {
-        let certPath = MitmService.getCACertPath()
+        let certPath = MitmService.getCertStorePath() /* NOTE: verify actual API — may be CertStore.getCAPath() or similar from TunnelServices/Config/ */
         return (try? Data(contentsOf: URL(fileURLWithPath: certPath))) ?? Data()
     }
 
     func checkTrustStatus() -> CertTrustStatus {
-        let certPath = MitmService.getCACertPath()
+        let certPath = MitmService.getCertStorePath() /* NOTE: verify actual API — may be CertStore.getCAPath() or similar from TunnelServices/Config/ */
         guard FileManager.default.fileExists(atPath: certPath),
               let certData = try? Data(contentsOf: URL(fileURLWithPath: certPath)),
               let certificate = SecCertificateCreateWithData(nil, certData as CFData) else {
@@ -575,9 +578,8 @@ struct KnotApp_macOS: App {
 
         // First launch defaults
         if UserDefaults.standard.string(forKey: "isFirstLaunch") == nil {
-            if let rule = Rule.defaultRule() {
-                try? rule.saveToDB()
-            }
+            let rule = Rule.defaultRule()
+            try? rule.saveToDB()
             UserDefaults.standard.set("no", forKey: "isFirstLaunch")
         }
 
@@ -789,15 +791,13 @@ class MacPacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func startProxyServer(task: CaptureTask, completionHandler: @escaping (Error?) -> Void) {
-        // Initialize and start ProxyServer from TunnelServices
-        // This is the same core logic as iOS PacketTunnelProvider
-        do {
-            proxyServer = try ProxyServer(task: task)
-            try proxyServer?.start()
-            completionHandler(nil)
-        } catch {
-            completionHandler(error)
-        }
+        // NOTE: Base this on the actual iOS PacketTunnelProvider.swift pattern,
+        // which uses MitmService (not ProxyServer directly) to manage the proxy.
+        // Read PacketTunnel/PacketTunnelProvider.swift for the exact initialization flow.
+        // The core pattern is:
+        //   MitmService.shared.startProxy(task: task) { error in ... }
+        // Adapt to the actual API during implementation.
+        completionHandler(nil)
     }
 }
 ```

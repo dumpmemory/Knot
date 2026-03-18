@@ -428,7 +428,9 @@ public struct RootView: View {
     private var wideLayout: some View {
         NavigationSplitView {
             PrimaryPageView(page: nav.primaryPage, nav: nav)
+                #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
+                #endif
         } detail: {
             NavigationStack(path: $nav.detailPath) {
                 PlaceholderView()
@@ -711,15 +713,22 @@ public final class SessionListViewModel {
 
     public func loadSessions() {
         // Load from database via TunnelServices Session model
-        let offset = currentPage * pageSize
+        // NOTE: Actual API is Session.findAll(taskID:keyWord:params:pageSize:pageIndex:orderBy:timeInterval:)
+        // The `params` parameter is [String:[String]]? dict for filters (host, methods, state, etc.)
+        // Adapt to the real signature during implementation:
+        var params: [String: [String]]? = nil
+        if focusHost != nil || focusMethod != nil || focusStatusCode != nil {
+            params = [:]
+            if let h = focusHost { params?["host"] = [h] }
+            if let m = focusMethod { params?["methods"] = [m] }
+            if let s = focusStatusCode { params?["state"] = [s] }
+        }
         let results = Session.findAll(
-            taskId: taskId,
-            searchText: searchText.isEmpty ? nil : searchText,
-            host: focusHost,
-            methods: focusMethod,
-            state: focusStatusCode,
-            offset: offset,
-            limit: pageSize
+            taskID: taskId,
+            keyWord: searchText.isEmpty ? nil : searchText,
+            params: params,
+            pageSize: pageSize,
+            pageIndex: currentPage
         )
         if currentPage == 0 {
             sessions = results
@@ -1123,10 +1132,10 @@ struct SessionCell: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 2) {
-                if let state = session.state {
-                    Text("\(state)")
+                if let state = session.state, let code = Int(state) {
+                    Text("\(code)")
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(statusColor(state))
+                        .foregroundStyle(statusColor(code))
                 }
                 if session.downloadFlow > 0 {
                     Text(formatBytes(session.downloadFlow))

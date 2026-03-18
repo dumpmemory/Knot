@@ -37,11 +37,13 @@
 **Files:**
 - Modify: 29 files in `TunnelServices/` (listed below)
 
-All 29 files use `import UIKit` at line 9 but **no actual UIKit types are used** — they only need `Foundation` (which provides `NSObject`, `NSNumber`, `Data`, etc. on all Apple platforms).
+All files use `import UIKit` at line 9 but **no actual UIKit types are used** — they only need `Foundation` (which provides `NSObject`, `NSNumber`, `Data`, etc. on all Apple platforms).
+
+> **Note:** The exact file count may vary. Use `grep -rl "import UIKit" TunnelServices/` to get the definitive list. The list below covers known files — verify against grep output and add any missing ones (e.g. `HTTPHandler.swift`).
 
 - [ ] **Step 1: Replace all UIKit imports**
 
-Replace `import UIKit` with `import Foundation` in these 29 files:
+Replace `import UIKit` with `import Foundation` in all matching files. Known files:
 
 ```
 TunnelServices/MitmService.swift
@@ -131,9 +133,11 @@ mkdir -p LocalPackages/TunnelServices/Sources/TunnelServices
 
 - [ ] **Step 2: Move source files**
 
+> **Note:** TunnelServices contains an embedded `ActiveSQLite/` directory (an ORM layer). This will be copied as part of the sources and requires the `SQLite.swift` SPM dependency to resolve its `import SQLite` statements.
+
 ```bash
 cd /Users/aa123/Documents/Knot
-# Copy all Swift sources to the package
+# Copy all Swift sources to the package (including ActiveSQLite ORM)
 cp -R TunnelServices/* LocalPackages/TunnelServices/Sources/TunnelServices/
 ```
 
@@ -628,9 +632,9 @@ public struct Log {
 }
 ```
 
-- [ ] **Step 2: Add KnotCore dependency to TunnelServices Package.swift**
+- [ ] **Step 2: Replace AxLogger imports directly in TunnelServices with os.Logger**
 
-Update `LocalPackages/TunnelServices/Package.swift` dependencies to NOT depend on KnotCore (would be circular). Instead, add `os` logging directly in TunnelServices files that need it, replacing `import AxLogger` with `import os`.
+TunnelServices CANNOT depend on KnotCore (circular dependency). Instead, replace `import AxLogger` with `import os` directly in TunnelServices files.
 
 For each file that imports AxLogger:
 ```bash
@@ -677,33 +681,17 @@ swift build 2>&1 | tail -30
 
 > **Note:** This will likely fail due to quiche/lsquic xcframeworks lacking macOS slices. If it fails, add conditional compilation to exclude QUIC on macOS temporarily:
 
-In files that import SwiftQuiche/SwiftLsquic, wrap with:
+In Package.swift, make quiche/lsquic dependencies conditional using `.when(platforms:)`:
+```swift
+.product(name: "SwiftQuiche", package: "SwiftQuiche", condition: .when(platforms: [.iOS])),
+.product(name: "SwiftLsquic", package: "SwiftLsquic", condition: .when(platforms: [.iOS])),
+```
+
+In source files that import SwiftQuiche/SwiftLsquic, wrap with:
 ```swift
 #if canImport(SwiftQuiche)
 import SwiftQuiche
 #endif
-```
-
-And in Package.swift, make quiche/lsquic dependencies conditional:
-```swift
-.target(
-    name: "TunnelServices",
-    dependencies: [
-        // ... other deps ...
-    ] + {
-        #if os(iOS)
-        return ["SwiftQuiche", "SwiftLsquic"]
-        #else
-        return []
-        #endif
-    }()
-)
-```
-
-> SPM doesn't support `#if os()` in Package.swift directly. Alternative: create separate targets or use `.when(platforms:)`:
-```swift
-.product(name: "SwiftQuiche", package: "SwiftQuiche", condition: .when(platforms: [.iOS])),
-.product(name: "SwiftLsquic", package: "SwiftLsquic", condition: .when(platforms: [.iOS])),
 ```
 
 - [ ] **Step 2: Verify KnotCore builds for macOS**
