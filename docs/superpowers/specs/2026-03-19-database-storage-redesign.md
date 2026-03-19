@@ -47,7 +47,7 @@
 │       ├── transport.db                # 传输层库（TCP/UDP/ICMP 包记录）
 │       ├── protocol.db                 # 协议层库（HTTP/WS/DNS 等结构化元数据）
 │       ├── decoded.db                  # 解码层库（解压/解码后的可读数据索引 + FTS）
-│       ├── state.db                    # 状态层库（连接状态、断点、修改记录、统计）
+│       ├── state.db                    # 状态层库（连接状态、修改记录、统计）
 │       ├── payloads/
 │       │   ├── raw/                    # 原始载荷（压缩/编码态）
 │       │   │   ├── {flowId}_req.bin
@@ -73,30 +73,42 @@
 
 | 库 | 写入频率 | 写入来源 | 读取场景 |
 |---|---|---|---|
-| **transport.db** | 极高频，每个包一条 | NIO EventLoop 线程 | 重放、统计、PCAP 导出 |
-| **protocol.db** | 高频，每个请求/响应一条 | Capture Handler 线程 | UI 列表浏览、过滤、搜索 |
+| **transport.db** | 极高频，每个包一条 | PacketCaptureEngine 线程（VPN 隧道扩展） | 重放、统计、PCAP 导出 |
+| **protocol.db** | 高频，每个请求/响应一条 | NIO Capture Handler 线程（代理管道） | UI 列表浏览、过滤、搜索 |
 | **decoded.db** | 低频，空闲时后台写入 | 后台解码队列 | 全文搜索、内容预览 |
-| **state.db** | 低频，状态变更时写入 | 多个来源 | 断点命中、连接管理、统计面板 |
+| **state.db** | 低频，状态变更时写入 | 多个来源 | 连接管理、修改记录、统计面板 |
+
+**注意：两条独立的数据路径**
+- **VPN 隧道路径**：原始 IP 包经 `PacketCaptureEngine` 处理（运行在 PacketTunnel 扩展进程），写入 `transport.db`
+- **代理管道路径**：解码后的协议数据经 NIO ChannelHandler 处理（运行在主 App 或代理进程），写入 `protocol.db`
+- 两条路径通过 `flow_id` 关联——`PacketCaptureEngine` 为每条 TCP/UDP 流分配 `flow_id`，代理管道沿用同一 `flow_id`
 
 ---
 
 ## 数据流全景
 
 ```
-网络数据包到达
+原始 IP 数据包到达（VPN 隧道）
     │
     ▼
 ┌──────────────────────────────────────────────────────┐
-│  NIO EventLoop 线程                                    │
+│  PacketCaptureEngine 线程（PacketTunnel 扩展进程）      │
 │                                                       │
 │  1. IP 包解析 ──→ transport.db (Packet)               │
-│                    + payloads/raw/ (原始载荷写入)        │
+│     分配 flow_id，记录 TCP/UDP/ICMP 包头元数据          │
+│     TCP 流量转发到本地代理端口                           │
+└──────────────────────────────────────────────────────┘
+    │ TCP 流量经本地代理端口进入
+    ▼
+┌──────────────────────────────────────────────────────┐
+│  NIO EventLoop 线程（代理管道）                         │
 │                                                       │
 │  2. 协议解析 ──→ protocol.db (Flow)                    │
 │     (HTTP/WS/DNS 等 Handler 提取结构化字段)              │
+│     + payloads/raw/ (请求/响应载荷写入)                  │
 │                                                       │
 │  3. 状态变更 ──→ state.db (Connection)                 │
-│     (连接建立/关闭/断点命中)                              │
+│     (连接建立/关闭)                                     │
 └──────────────────────────────────────────────────────┘
     │
     │  通知解码队列（flowId + payloadRef）
@@ -147,13 +159,31 @@ CREATE TABLE capture_task (
 CREATE TABLE rule (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     name                    TEXT NOT NULL DEFAULT 'Default',
-    default_strategy        TEXT NOT NULL DEFAULT 'DIRECT',
+    default_strategy        TEXT NOT NULL DEFAULT 'DIRECT',  -- DIRECT/REJECT/COPY
     blacklist_enabled       INTEGER NOT NULL DEFAULT 0,
-    config                  TEXT NOT NULL DEFAULT '',
+    config                  TEXT NOT NULL DEFAULT '',         -- 完整规则文本（[General]/[Rule]/[Host] 格式）
     created_at              REAL NOT NULL,
     author                  TEXT NOT NULL DEFAULT '',
     note                    TEXT NOT NULL DEFAULT ''
 );
+-- 注意：default_strategy 和 blacklist_enabled 是从 config 中提取的冗余字段，
+-- 用于快速查询，config 仍然保存完整的规则文本，运行时由 Rule 解析器解析。
+
+-- 断点规则（全局，跨 task 共享）
+CREATE TABLE breakpoint (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    match_phase     TEXT NOT NULL DEFAULT 'request',  -- request / response / both
+    match_protocol  TEXT NOT NULL DEFAULT '*',         -- HTTP / * (所有)
+    match_pattern   TEXT NOT NULL DEFAULT '',          -- host/uri 匹配模式
+    action          TEXT NOT NULL DEFAULT 'pause',    -- pause / run_script
+    script_ref      TEXT NOT NULL DEFAULT '',          -- JS 脚本文件引用
+    priority        INTEGER NOT NULL DEFAULT 0,
+    created_at      REAL NOT NULL,
+    note            TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX idx_breakpoint_enabled ON breakpoint(enabled);
 ```
 
 ### 2. transport.db（传输层库）
@@ -211,6 +241,13 @@ CREATE TABLE flow (
     ended_at        REAL,
     duration_ms     REAL,
 
+    -- 详细时间线（性能分析用，均为时间戳，可选）
+    connect_at      REAL,                        -- TCP 连接发起
+    connected_at    REAL,                        -- TCP 连接建立
+    tls_done_at     REAL,                        -- TLS 握手完成
+    req_end_at      REAL,                        -- 请求发送完毕
+    rsp_start_at    REAL,                        -- 首字节响应到达 (TTFB)
+
     -- 通用流量统计
     upload_bytes    INTEGER NOT NULL DEFAULT 0,
     download_bytes  INTEGER NOT NULL DEFAULT 0,
@@ -248,6 +285,7 @@ CREATE INDEX idx_flow_status ON flow(status);
 CREATE INDEX idx_flow_search_key1 ON flow(search_key1);
 CREATE INDEX idx_flow_search_key2 ON flow(search_key2);
 CREATE INDEX idx_flow_search_key3 ON flow(search_key3);
+CREATE INDEX idx_flow_search_key4 ON flow(search_key4);
 ```
 
 **各协议的 search_key 映射**：
@@ -285,7 +323,11 @@ CREATE TABLE decoded_entry (
 
     decoded_at      REAL NOT NULL,
 
-    UNIQUE(flow_id, direction)
+    -- 对于 HTTP 等请求/响应模式：sequence = 0
+    -- 对于 WebSocket/gRPC streaming 等多帧协议：sequence 递增
+    sequence        INTEGER NOT NULL DEFAULT 0,
+
+    UNIQUE(flow_id, direction, sequence)
 );
 
 -- FTS5 全文搜索
@@ -300,9 +342,16 @@ WHEN NEW.search_text IS NOT NULL BEGIN
     INSERT INTO decoded_fts(rowid, search_text) VALUES (NEW.id, NEW.search_text);
 END;
 
-CREATE TRIGGER decoded_fts_delete BEFORE DELETE ON decoded_entry BEGIN
+CREATE TRIGGER decoded_fts_delete BEFORE DELETE ON decoded_entry
+WHEN OLD.search_text IS NOT NULL BEGIN
     INSERT INTO decoded_fts(decoded_fts, rowid, search_text)
     VALUES('delete', OLD.id, OLD.search_text);
+END;
+
+CREATE TRIGGER decoded_fts_update AFTER UPDATE OF search_text ON decoded_entry BEGIN
+    INSERT INTO decoded_fts(decoded_fts, rowid, search_text)
+    VALUES('delete', OLD.id, OLD.search_text);
+    INSERT INTO decoded_fts(rowid, search_text) VALUES (NEW.id, NEW.search_text);
 END;
 
 CREATE INDEX idx_decoded_flow_id ON decoded_entry(flow_id);
@@ -325,18 +374,7 @@ CREATE TABLE connection (
     UNIQUE(flow_id)
 );
 
-CREATE TABLE breakpoint (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    enabled         INTEGER NOT NULL DEFAULT 1,
-    match_phase     TEXT NOT NULL DEFAULT 'request',
-    match_protocol  TEXT NOT NULL DEFAULT '*',
-    match_pattern   TEXT NOT NULL DEFAULT '',
-    action          TEXT NOT NULL DEFAULT 'pause',
-    script_ref      TEXT NOT NULL DEFAULT '',
-    priority        INTEGER NOT NULL DEFAULT 0,
-    created_at      REAL NOT NULL,
-    note            TEXT NOT NULL DEFAULT ''
-);
+-- 注意：breakpoint 表已移至 catalog.db（全局），不在 per-task 的 state.db 中
 
 CREATE TABLE modify_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -364,8 +402,13 @@ CREATE TABLE task_stats (
 
 CREATE INDEX idx_connection_flow_id ON connection(flow_id);
 CREATE INDEX idx_modify_log_flow_id ON modify_log(flow_id);
-CREATE INDEX idx_breakpoint_enabled ON breakpoint(enabled);
 ```
+
+**task_stats 初始化**：表创建后立即插入唯一行：
+```sql
+INSERT INTO task_stats (id, updated_at) VALUES (1, 0);
+```
+后续只用 `UPDATE` 更新，不再 `INSERT`。
 
 ---
 
@@ -505,14 +548,26 @@ class TaskDatabaseGroup {
 }
 ```
 
-### PRAGMA 配置（所有库统一）
+### PRAGMA 配置
 
+根据执行环境区分配置：
+
+**主 App 进程**：
 ```sql
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA cache_size = -2000;          -- 2MB 页缓存
-PRAGMA mmap_size = 268435456;       -- 256MB mmap
+PRAGMA mmap_size = 134217728;       -- 128MB mmap
 PRAGMA busy_timeout = 3000;         -- 3 秒写锁等待
+```
+
+**PacketTunnel 扩展进程**（内存严格受限，Apple 建议 < 15MB）：
+```sql
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA cache_size = -512;           -- 512KB 页缓存
+PRAGMA mmap_size = 16777216;        -- 16MB mmap
+PRAGMA busy_timeout = 3000;
 ```
 
 ### 并发模型
@@ -542,7 +597,42 @@ class BatchWriter {
 }
 ```
 
-批量写入性能提升约 33 倍（200 包/秒：逐条 200 次 fsync → 批量 4 次 fsync）。
+批量写入大幅降低事务开销（200 包/秒：逐条 200 次事务 → 批量 4 次事务，减少锁获取和 WAL 帧写入次数）。
+
+### catalog.db 统计快照同步
+
+`capture_task` 表中的 `flow_count`/`upload_bytes`/`download_bytes` 是来自 `state.db → task_stats` 的快照：
+
+- **抓包进行中**：每 5 秒定时器从 `task_stats` 读取最新值，写入 `capture_task`
+- **抓包停止时**：立即做一次最终同步
+- **App 启动时**：对所有 `status = running` 的 task 重新同步（处理上次崩溃的情况）
+- 同步由主 App 进程的 `TaskStatsSync` 组件负责，在主线程或低优先级队列执行
+
+### flowId 生成
+
+`flowId` 格式：`{timestamp_ms}_{sequence}`，如 `1679012345678_0001`。
+
+```swift
+/// 线程安全的 flowId 生成器（每个 task 一个实例）
+class FlowIdGenerator {
+    private let lock = NSLock()
+    private var lastTimestamp: Int64 = 0
+    private var sequence: Int = 0
+
+    func next() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        if now == lastTimestamp {
+            sequence += 1
+        } else {
+            lastTimestamp = now
+            sequence = 1
+        }
+        return String(format: "%lld_%04d", now, sequence)
+    }
+}
+```
 
 ---
 
@@ -603,18 +693,27 @@ struct FlowRecord {
     let port: Int
     let startedAt: TimeInterval
     var endedAt: TimeInterval?
-    var uploadBytes: Int64
-    var downloadBytes: Int64
-    var status: FlowStatus
-    var errorMessage: String
-    var summary: String
-    var searchKey1: String  // 高频查询字段
-    var searchKey2: String
-    var searchKey3: String
-    var searchKey4: String
-    var metadata: [String: Any]  // 协议特有字段（JSON）
-    var reqPayloadRef: String
-    var rspPayloadRef: String
+    var uploadBytes: Int64 = 0
+    var downloadBytes: Int64 = 0
+    var status: FlowStatus = .inProgress
+    var errorMessage: String = ""
+    var summary: String = ""
+    // 高频查询字段
+    var searchKey1: String = ""
+    var searchKey2: String = ""
+    var searchKey3: String = ""
+    var searchKey4: String = ""
+    // 详细时间线（可选）
+    var connectAt: TimeInterval?
+    var connectedAt: TimeInterval?
+    var tlsDoneAt: TimeInterval?
+    var reqEndAt: TimeInterval?
+    var rspStartAt: TimeInterval?
+    // 协议特有字段（序列化为 JSON TEXT）
+    // 实现时应使用 Codable 协议或 [String: AnyCodable] 替代 [String: Any]
+    var metadata: [String: Any] = [:]
+    var reqPayloadRef: String = ""
+    var rspPayloadRef: String = ""
 }
 ```
 
@@ -676,9 +775,16 @@ enum PathManager {
 ### 旧数据迁移
 
 提供 `LegacyMigrator` 一次性迁移工具：
-- CaptureTask → catalog.db
-- Session → protocol.db (Flow)
+- CaptureTask → catalog.db (capture_task)
+- Rule → catalog.db (rule)，`config` 字段原样迁移，`default_strategy`/`blacklist_enabled` 从 config 中解析提取
+- Session → protocol.db (flow)
 - body 文件 → payloads/raw/（文件移动，非复制）
+
+**迁移安全措施**：
+- 迁移前先备份 `nio.db`
+- 使用事务保证原子性：单个 task 的所有 session 在一个事务内迁移
+- 迁移中断恢复：记录迁移进度到 `catalog.db` 的 `migration_state` 键值，重启后从断点继续
+- 迁移完成后保留 `nio.db.bak`，用户确认无误后可手动删除
 
 ### 新旧字段映射
 
@@ -688,7 +794,12 @@ enum PathManager {
 | reqHeads, rspHeads | protocol.db → flow.metadata | JSON |
 | reqBody, rspBody | payloads/raw/ | flow.req_payload_ref, rsp_payload_ref |
 | state(statusCode) | protocol.db → flow | searchKey3 |
+| reqType/rspType | protocol.db → flow | searchKey4 |
 | startTime, endTime | protocol.db → flow | started_at, ended_at |
+| connectTime, connectedTime | protocol.db → flow | connect_at, connected_at |
+| handshakeEndTime | protocol.db → flow | tls_done_at |
+| reqEndTime | protocol.db → flow | req_end_at |
+| rspStartTime | protocol.db → flow | rsp_start_at |
 | uploadTraffic, downloadFlow | protocol.db → flow | upload_bytes, download_bytes |
 | sstate | protocol.db → flow | status |
 | taskID | 不需要 | 库本身在 task 目录下 |
