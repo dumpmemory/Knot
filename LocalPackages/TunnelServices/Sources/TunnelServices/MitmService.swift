@@ -417,7 +417,7 @@ public class MitmService: NSObject {
         }
         let isExits = fileManager.fileExists(atPath: dir, isDirectory:nil)
         if !isExits, let certDir = certDirectory {
-            try? fileManager.createDirectory(at: certDir, withIntermediateDirectories: false, attributes: nil)
+            try? fileManager.createDirectory(at: certDir, withIntermediateDirectories: true, attributes: nil)
         }
         AxLogger.log("Cert Directory path:\(certDirectory?.absoluteString ?? "null")", level: .Info)
         return certDirectory
@@ -439,6 +439,11 @@ public class MitmService: NSObject {
         }
         let isExits = fileManager.fileExists(atPath: file, isDirectory:&isDir)
         if !isExits {
+            // Ensure the parent directory exists (may not on macOS)
+            let dir = (file as NSString).deletingLastPathComponent
+            if !fileManager.fileExists(atPath: dir) {
+                try? fileManager.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: nil)
+            }
             fileManager.createFile(atPath: file, contents: nil, attributes: nil)
         }
         AxLogger.log("DB file path:\(file)", level: .Info)
