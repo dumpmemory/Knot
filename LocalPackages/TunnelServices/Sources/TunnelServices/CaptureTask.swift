@@ -21,6 +21,8 @@ public let TaskConfigDidChanged = AppNotification.taskConfigDidChanged
 
 public class CaptureTask: ASModel {
 
+    override open class var nameOfTable: String { return "task" }
+
     //
     var numberOfUse:NSNumber = 0  //使用次数，是否使用过
     //
